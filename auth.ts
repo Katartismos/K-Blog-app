@@ -1,20 +1,37 @@
 /**
- * Authentication Configuration
+ * Server Authentication Helper
  * 
- * This file sets up NextAuth with Google as the authentication provider.
- * It exports the necessary handlers and helper functions (signIn, signOut, auth)
- * to be used throughout the application for session management.
+ * Provides server-side session retrieval for Next.js Server Components
+ * and Server Actions by communicating with the NestJS Better Auth backend.
  */
 
-import NextAuth from "next-auth";
-import GoogleProvider from "next-auth/providers/google";
+import { cookies } from 'next/headers';
+import { BACKEND_URL } from '@/lib/constants';
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
-  // Configure one or more authentication providers
-  providers: [
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    }),
-  ],
-});
+export async function auth() {
+  try {
+    const cookieStore = await cookies();
+    const cookieHeader = cookieStore.toString();
+
+    if (!cookieHeader) {
+      return null;
+    }
+
+    const res = await fetch(`${BACKEND_URL}/api/auth/get-session`, {
+      headers: {
+        Cookie: cookieHeader,
+      },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const session = await res.json();
+    return session;
+  } catch (error) {
+    console.error('Error fetching server session from backend:', error);
+    return null;
+  }
+}

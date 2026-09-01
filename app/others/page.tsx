@@ -1,72 +1,67 @@
 /**
  * Others Page (Server Component)
  * 
- * Displays a list of older blog posts.
- * Optimizations implemented:
- * 1. .skip(9): Skip the posts already shown on the homepage.
- * 2. .select('-content'): Exclude large content field for faster data transfer.
- * 3. Aggregation Pipeline: Efficiently calculate category counts.
+ * Displays older blog posts fetched from the NestJS PostgreSQL backend.
  */
 
-import connectToDatabase from '@/lib/mongodb';
-import BlogPost from '@/lib/models/BlogPost';
 import OthersClient from '@/components/OthersClient';
-import type { Article } from '@/lib/constants';
+import { BACKEND_URL, CATEGORIES_LIST, CATEGORY_COLORS, type Article } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 
 export default async function OthersPage() {
-  // Ensure database connection
-  await connectToDatabase();
-
   /**
-   * Optimization 1 & 2: Skip and Select
-   * We skip the first 9 posts (featured + latest) and select only needed fields.
+   * Fetch posts from backend
    */
-  const posts = await BlogPost.find({})
-    .sort({ createdAt: -1 })
-    .skip(9)
-    .select('-content -authorImage')
-    .lean();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let posts: any[] = [];
+  try {
+    const res = await fetch(`${BACKEND_URL}/posts`, {
+      cache: 'no-store',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    if (res.ok) {
+      posts = await res.json();
+    } else {
+      console.error(`Failed to fetch posts from backend: ${res.status} ${res.statusText}`);
+    }
+  } catch (error) {
+    console.error('Error fetching posts from backend:', error);
+  }
 
   /**
    * Data Serialization
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const serializedPosts: Article[] = posts.map((post: any) => ({
-    _id: String(post._id),
+    _id: post.id ? String(post.id) : String(post._id || ''),
+    id: post.id ? String(post.id) : '',
     slug: post.slug || '',
     title: post.title || 'Untitled',
     imageUrl: post.imageUrl || 'https://placehold.co/800x600/374151/ffffff?text=No+Image',
     category: post.category || 'TECHNOLOGY',
-    categoryColor: post.categoryColor || 'bg-indigo-600',
+    categoryColor: post.categoryColor || CATEGORY_COLORS[post.category] || 'bg-indigo-600',
     date: post.date || (post.createdAt ? new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown Date'),
     readTime: post.readTime || '5-min read',
     excerpt: post.excerpt || 'No excerpt available.',
-    author: post.author || 'Admin User',
+    author: post.author?.name || post.author || 'Admin User',
+    authorImage: post.author?.image || null,
   }));
 
-  /**
-   * Optimization 3: MongoDB Aggregation
-   */
-  const aggregationResult = await BlogPost.aggregate([
-    {
-      $group: {
-        _id: "$category",
-        count: { $sum: 1 }
-      }
-    }
-  ]);
+  // Older posts are those after the first 9 featured/latest posts
+  const olderPosts = serializedPosts.slice(9);
 
-  const categoriesList = ['TECHNOLOGY', 'TRAVEL', 'FOODS', 'LIFESTYLE', 'FINANCE', 'GAMING'];
-  const topicsInfo = categoriesList.map(cat => {
-    const found = aggregationResult.find(res => res._id?.toUpperCase() === cat);
+  // Category counts
+  const topicsInfo = CATEGORIES_LIST.map(cat => {
+    const count = serializedPosts.filter(p => (p.category || '').toUpperCase() === cat).length;
     return {
       name: cat.charAt(0) + cat.slice(1).toLowerCase(),
-      count: found ? found.count : 0
+      count,
     };
   });
 
   // Render the Client Component for the others page
-  return <OthersClient olderPosts={serializedPosts} topics={topicsInfo} />;
+  return <OthersClient olderPosts={olderPosts} topics={topicsInfo} />;
 }

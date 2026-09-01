@@ -4,7 +4,7 @@
  * The main navigation bar of the application. It features:
  * - Brand logo and navigation links
  * - Search bar integration
- * - Authentication controls (Sign In / Sign Out / User Profile)
+ * - Authentication controls (Sign In / Sign Out / User Profile) via Better Auth
  * - "Create a Post" shortcut for logged-in users
  * - GSAP entrance animations for a professional feel
  * - Responsive mobile menu
@@ -18,7 +18,7 @@ import Image from 'next/image';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { Search, PenSquare, Newspaper, Menu, X, User2, Sun, Moon } from 'lucide-react'; 
-import { useSession, signIn, signOut } from 'next-auth/react'; 
+import { useSession, signIn, signOut } from '@/lib/auth-client'; 
 
 const Header = () => {
   // Local state for toggling menus
@@ -26,8 +26,9 @@ const Header = () => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
   
-  // Access session data from NextAuth
-  const { data: session, status } = useSession();
+  // Access session data from Better Auth client
+  const { data: session, isPending } = useSession();
+  const isAuthenticated = !isPending && !!session?.user;
   
   const headerRef = useRef(null);
   const logoRef = useRef(null);
@@ -102,6 +103,32 @@ const Header = () => {
 
   }, { scope: headerRef });
 
+  const handleSignIn = async () => {
+    try {
+      setIsUserMenuOpen(false);
+      await signIn.social({
+        provider: 'google',
+        callbackURL: window.location.origin,
+      });
+    } catch (error) {
+      console.error('Sign in error:', error);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      setIsUserMenuOpen(false);
+      await signOut({
+        fetchOptions: {
+          onSuccess: () => {
+            window.location.reload();
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
+  };
 
   const navItems = [
     { name: 'HOME', href: '/' },
@@ -162,7 +189,7 @@ const Header = () => {
             </button>
 
             {/* Show "Create a Post" only if authenticated */}
-            {status === "authenticated" && (
+            {isAuthenticated && (
               <Link href="/new" className="nav-item hidden sm:flex items-center space-x-2 bg-amber-700 dark:bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-full shadow-md hover:bg-amber-800 dark:hover:bg-amber-700 transition">
                 <PenSquare size={16} />
                 <span>Create a Post</span>
@@ -175,7 +202,7 @@ const Header = () => {
                 className="h-10 w-10 bg-gray-100 dark:bg-slate-800 rounded-full cursor-pointer flex items-center justify-center overflow-hidden border border-gray-200 dark:border-slate-700"
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
               >
-                {status === "authenticated" && session?.user?.image ? (
+                {isAuthenticated && session?.user?.image ? (
                   <Image src={session.user.image} alt="User Avatar" width={40} height={40} className="object-cover" />
                 ) : (
                   <User2 size={20} className="text-gray-400 dark:text-gray-500" />
@@ -185,15 +212,15 @@ const Header = () => {
               {/* User Dropdown Menu */}
               {isUserMenuOpen && (
                 <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-md shadow-lg py-1 border border-gray-100 dark:border-slate-700 z-20">
-                  {status === "authenticated" ? (
+                  {isAuthenticated ? (
                     <>
                       {/* Authenticated State */}
                       <div className="px-4 py-2 text-sm text-gray-700 dark:text-gray-200 border-b border-gray-100 dark:border-slate-700">
-                        <p className="font-semibold truncate">{session.user?.name || "User"}</p>
+                        <p className="font-semibold truncate">{session?.user?.name || "User"}</p>
                       </div>
                       <button 
-                        onClick={() => { signOut(); setIsUserMenuOpen(false); }}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-750 transition"
+                        onClick={handleSignOut}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-750 transition cursor-pointer"
                       >
                         Sign Out
                       </button>
@@ -205,8 +232,8 @@ const Header = () => {
                         <p className="font-semibold">Guest</p>
                       </div>
                       <button 
-                        onClick={() => { signIn('google'); setIsUserMenuOpen(false); }}
-                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-750 transition"
+                        onClick={handleSignIn}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-750 transition cursor-pointer"
                       >
                         Sign in with Google
                       </button>
@@ -246,7 +273,7 @@ const Header = () => {
               placeholder="Search articles..." 
               className="w-full p-2 border border-gray-300 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-black dark:text-white"
             />
-            {status === "authenticated" && (
+            {isAuthenticated && (
               <Link href="/new" className="mt-2 w-full flex justify-center items-center space-x-2 bg-amber-700 dark:bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-full" onClick={() => setIsMenuOpen(false)}>
                 <PenSquare size={16} />
                 <span>Create a Post</span>
@@ -259,4 +286,4 @@ const Header = () => {
   );
 };
 
-export default Header
+export default Header;

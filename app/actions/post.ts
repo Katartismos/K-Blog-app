@@ -1,28 +1,22 @@
 /**
  * Post Server Actions
  * 
- * Contains functions that run on the server to handle blog post operations.
- * Currently supports creating new posts with:
- * - Authentication verification
- * - HTML sanitization
- * - Image upload to Cloudinary
- * - Database storage via Mongoose
- * - Cache revalidation
+ * Contains functions that run on the server to handle blog post operations
+ * via the NestJS PostgreSQL + Better Auth backend.
  */
 
 'use server'
 
 import { revalidatePath } from 'next/cache';
-import connectToDatabase from '@/lib/mongodb';
-import BlogPost from '@/lib/models/BlogPost';
+import { cookies } from 'next/headers';
 import sanitizeHtml from 'sanitize-html';
-import { auth } from '@/auth';
+import { BACKEND_URL } from '@/lib/constants';
 
 /**
  * HTML Sanitization Options
  * 
  * Defines which tags and attributes are allowed in the blog post content.
- * This prevents XSS attacks by stripping malicious scripts and styles.
+ * Prevents XSS attacks by stripping malicious scripts and styles.
  */
 const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -41,35 +35,28 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
 /**
  * createPost
  * 
- * A Server Action to create a new blog post.
+ * Server Action to create a new blog post via the backend API.
  * 
- * @param {FormData} formData - The submitted form data containing title, content, image, etc.
- * @returns {Promise<{error?: string, success?: boolean}>} Result of the operation.
+ * @param {FormData} formData - Form data containing title, content, excerpt, category, image
+ * @returns {Promise<{error?: string, success?: boolean, post?: any}>} Result of the operation.
  */
 export async function createPost(formData: FormData) {
-  // 1. Verify User Authentication
-  const session = await auth();
-  if (!session?.user) {
-    return { error: 'You must be logged in to create a post.' };
-  }
+  // 1. Get cookies to pass authentication to backend
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
 
-  // 2. Extract Data from FormData
+  // 2. Validate basic fields
   const title = formData.get('title') as string;
   const rawContent = formData.get('content') as string;
   const excerpt = formData.get('excerpt') as string;
-  const category = (formData.get('category') as string || 'TECHNOLOGY').toUpperCase();
   const imageFile = formData.get('image') as File | null;
 
-  // 3. Basic Field Validation
   if (!title || !rawContent) {
     return { error: 'Title and content are required fields.' };
   }
 
-  // 4. Content Sanitization
-  // Sanitize the HTML content to prevent XSS.
+  // 3. Sanitize HTML content
   const content = sanitizeHtml(rawContent, sanitizeOptions);
-
-  // 5. Length Validation (Plain Text)
   const plainText = content.replace(/<[^>]+>/g, '').trim();
   if (plainText.length < 30) {
     return { error: 'Content must be at least 30 characters long.' };
@@ -83,71 +70,35 @@ export async function createPost(formData: FormData) {
     return { error: 'An image is required.' };
   }
 
-  // 6. Image Upload to Cloudinary
-  let imageUrl = '';
-  if (imageFile && imageFile.size > 0) {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const uploadPreset = process.env.CLOUDINARY_PRESET_NAME;
-    
-    if (!cloudName || !uploadPreset) {
-      return { error: 'Cloudinary configuration is missing.' };
-    }
+  // Update content in formData with sanitized version
+  formData.set('content', content);
 
-    const uploadData = new FormData();
-    uploadData.append('file', imageFile);
-    uploadData.append('upload_preset', uploadPreset);
-
-    try {
-      const uploadRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-        method: 'POST',
-        body: uploadData,
-      });
-
-      if (!uploadRes.ok) {
-        return { error: 'Failed to upload image to Cloudinary.' };
-      }
-
-      const uploadJson = await uploadRes.json();
-      imageUrl = uploadJson.secure_url;
-    } catch (error) {
-      console.error('Cloudinary upload error:', error);
-      return { error: 'Error uploading image to Cloudinary.' };
-    }
-  }
-
-  // 7. Database Persistence
+  // 4. Send request to backend
   try {
-    await connectToDatabase();
-
-    // Format display date
-    const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    
-    // Estimate read time (assuming 200 words per minute)
-    const words = plainText.split(/\s+/).filter(Boolean).length;
-    const readTime = Math.ceil(words / 200) + '-min read';
-
-    // Create the document in MongoDB
-    await BlogPost.create({
-      title,
-      content,
-      excerpt,
-      category,
-      author: session.user.name || 'Anonymous User',
-      authorImage: session.user.image || '',
-      date,
-      readTime,
-      imageUrl,
+    const res = await fetch(`${BACKEND_URL}/posts`, {
+      method: 'POST',
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      body: formData,
+      cache: 'no-store',
     });
 
-  } catch (error: Error | unknown) {
-    console.error('Error creating post:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred.';
-    return { error: errorMessage || 'Failed to create the blog post. Please try again later.' };
-  }
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const message = errorData.message || (res.status === 401 ? 'You must be logged in to create a post.' : 'Failed to create post on server.');
+      return { error: Array.isArray(message) ? message.join(', ') : message };
+    }
 
-  // 8. Revalidate Cache
-  // Forces Next.js to refresh the home page data so the new post appears immediately.
-  revalidatePath('/');
-  
-  return { success: true };
+    const post = await res.json();
+
+    // 5. Revalidate cache
+    revalidatePath('/');
+    revalidatePath('/others');
+
+    return { success: true, post };
+  } catch (error) {
+    console.error('Error creating post via backend:', error);
+    return { error: error instanceof Error ? error.message : 'Unable to connect to the backend server.' };
+  }
 }

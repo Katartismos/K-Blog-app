@@ -9,7 +9,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/lib/auth-client';
 import { createPost } from '@/app/actions/post';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
@@ -17,7 +17,7 @@ import TiptapEditor from '@/components/TiptapEditor';
 
 export default function NewPostPage() {
   const router = useRouter();
-  const { status } = useSession();
+  const { data: session, isPending } = useSession();
   
   // Local state for UI feedback and form data
   const [loading, setLoading] = useState(false);
@@ -27,18 +27,18 @@ export default function NewPostPage() {
   /**
    * Authentication Guard
    * 
-   * Redirects unauthenticated users to the home page.
+   * Redirects unauthenticated users to the home page once session loading completes.
    */
   useEffect(() => {
-    if (status === 'unauthenticated') {
+    if (!isPending && !session?.user) {
       router.push('/');
     }
-  }, [status, router]);
+  }, [isPending, session, router]);
 
   // Show loading spinner while session is being verified
-  if (status === 'loading' || status === 'unauthenticated') {
+  if (isPending || !session?.user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-700"></div>
       </div>
     );
@@ -79,7 +79,7 @@ export default function NewPostPage() {
     formData.set('content', contentHtml);
 
     try {
-      // Execute server action to save the post
+      // Execute server action to save the post to the backend
       const response = await createPost(formData);
 
       if (response?.error) {
@@ -91,7 +91,7 @@ export default function NewPostPage() {
       }
     } catch (err: unknown) {
       console.error("Action error:", err);
-      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred while communicating with the server. The image might be too large (Max: 10MB)';
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred while communicating with the server.';
       setError(errorMessage);
       setLoading(false);
     }

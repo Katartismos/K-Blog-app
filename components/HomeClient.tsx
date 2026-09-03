@@ -45,17 +45,110 @@ const HomeClient: React.FC<HomeClientProps> = ({ featuredArticles, latestArticle
     : latestArticles.filter(article => (article.category || 'TECHNOLOGY').toUpperCase() === selectedTag.toUpperCase());
 
   /**
-   * Layout Mapping
+   * Layout Mapping Types and Resolution
    * 
-   * Maps filtered articles into specific slots to create an asymmetric, masonry-style grid.
-   * - col1: Large cards
-   * - col2_row1: Two small cards
-   * - col2_row2: Two small cards
+   * Dynamically assigns up to 6 articles to a 4-box (2x2) grid layout:
+   * - 1 card: Box 1 (restricted regular card)
+   * - 2 cards: Box 1, Box 2 (both regular cards)
+   * - 3 cards: Box 1, Box 2, Box 3 (all regular cards)
+   * - 4 cards: Box 1, Box 2, Box 3, Box 4 (all regular cards)
+   * - 5 cards: Box 1 (regular), Box 2 (2 small cards), Box 3 (regular), Box 4 (regular)
+   * - 6 cards: Box 1 (regular), Box 2 (2 small cards), Box 3 (2 small cards), Box 4 (regular)
+   * Any articles beyond 6 are accessed via "Load More".
    */
-  const articleMap = {
-    col1: [filteredArticles[0], filteredArticles[3]].filter(Boolean),
-    col2_row1: [filteredArticles[1], filteredArticles[2]].filter(Boolean),
-    col2_row2: [filteredArticles[4], filteredArticles[5]].filter(Boolean),
+  type BoxContent = 
+    | { type: 'single'; article: Article }
+    | { type: 'pair'; articles: [Article, Article] }
+    | null;
+
+  interface GridLayout {
+    box1: BoxContent;
+    box2: BoxContent;
+    box3: BoxContent;
+    box4: BoxContent;
+  }
+
+  const getGridLayout = (articles: Article[]): GridLayout => {
+    // Strictly cap at a maximum of 6 articles
+    const posts = articles.slice(0, 6);
+    const count = posts.length;
+
+    if (count === 0) {
+      return { box1: null, box2: null, box3: null, box4: null };
+    }
+    if (count === 1) {
+      return {
+        box1: { type: 'single', article: posts[0] },
+        box2: null,
+        box3: null,
+        box4: null,
+      };
+    }
+    if (count === 2) {
+      return {
+        box1: { type: 'single', article: posts[0] },
+        box2: { type: 'single', article: posts[1] },
+        box3: null,
+        box4: null,
+      };
+    }
+    if (count === 3) {
+      return {
+        box1: { type: 'single', article: posts[0] },
+        box2: { type: 'single', article: posts[1] },
+        box3: { type: 'single', article: posts[2] },
+        box4: null,
+      };
+    }
+    if (count === 4) {
+      return {
+        box1: { type: 'single', article: posts[0] },
+        box2: { type: 'single', article: posts[1] },
+        box3: { type: 'single', article: posts[2] },
+        box4: { type: 'single', article: posts[3] },
+      };
+    }
+    if (count === 5) {
+      return {
+        box1: { type: 'single', article: posts[0] },
+        box2: { type: 'pair', articles: [posts[1], posts[2]] },
+        box3: { type: 'single', article: posts[3] },
+        box4: { type: 'single', article: posts[4] },
+      };
+    }
+    // count >= 6
+    return {
+      box1: { type: 'single', article: posts[0] },
+      box2: { type: 'pair', articles: [posts[1], posts[2]] },
+      box3: { type: 'pair', articles: [posts[3], posts[4]] },
+      box4: { type: 'single', article: posts[5] },
+    };
+  };
+
+  const grid = getGridLayout(filteredArticles);
+
+  const renderBox = (box: BoxContent) => {
+    if (!box) return null;
+    if (box.type === 'single') {
+      return (
+        <LatestArticleCard 
+          key={box.article._id || box.article.slug || 'single'} 
+          article={box.article} 
+          isSmallCard={false} 
+        />
+      );
+    }
+    return (
+      <div className="flex flex-col gap-8 h-full">
+        {box.articles.map((article, idx) => (
+          <LatestArticleCard 
+            key={article._id || article.slug || idx} 
+            article={article} 
+            isSmallCard={true} 
+          />
+        ))}
+      </div>
+    );
   };
 
   /**
@@ -119,30 +212,33 @@ const HomeClient: React.FC<HomeClientProps> = ({ featuredArticles, latestArticle
             {selectedTag === 'All' ? "WHAT'S NEW" : selectedTag.toUpperCase()}
           </h3>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-start">
               
             {/* Articles Column */}
-            <div className="lg:col-span-2 grid gap-8">
-                
-              {/* Row 1: 1 Large Card, 2 Small Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                {articleMap.col1[0] && <LatestArticleCard article={articleMap.col1[0]} isSmallCard={false} />}
-                <div className="flex flex-col gap-8 h-full">
-                  {articleMap.col2_row1.map((article, idx) => (
-                    <LatestArticleCard key={article._id || idx} article={article} isSmallCard={true} />
-                  ))}
+            <div className="lg:col-span-2 grid gap-8 h-fit">
+              {filteredArticles.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-lg text-gray-500 dark:text-gray-400 font-medium">No articles found in this category.</p>
                 </div>
-              </div>
+              ) : (
+                <>
+                  {/* Row 1: Box 1 and Box 2 */}
+                  {(grid.box1 || grid.box2) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                      {renderBox(grid.box1)}
+                      {renderBox(grid.box2)}
+                    </div>
+                  )}
 
-              {/* Row 2: 2 Small Cards, 1 Large Card (Inverse of Row 1) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-                <div className="flex flex-col gap-8 h-full">
-                  {articleMap.col2_row2.map((article, idx) => (
-                    <LatestArticleCard key={article._id || idx} article={article} isSmallCard={true} />
-                  ))}
-                </div>
-                {articleMap.col1[1] && <LatestArticleCard article={articleMap.col1[1]} isSmallCard={false} />}
-              </div>
+                  {/* Row 2: Box 3 and Box 4 */}
+                  {(grid.box3 || grid.box4) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                      {renderBox(grid.box3)}
+                      {renderBox(grid.box4)}
+                    </div>
+                  )}
+                </>
+              )}
 
               {/* Load More Trigger */}
               {(selectedTag === 'All' ? hasMore : (topics?.find(t => t.name.toUpperCase() === selectedTag.toUpperCase())?.count || 0) > 6) && (

@@ -6,12 +6,11 @@ import { BACKEND_URL } from './constants';
 /**
  * Better Auth Client
  * 
- * Configured with the NestJS backend baseURL (http://localhost:5000 in dev, 
- * or https://k-blog-backend.onrender.com in prod).
- * Handles social sign-in, credentials, sessions, and cookies.
+ * Proxies auth requests through Next.js rewrites to the NestJS backend.
+ * This keeps session and OAuth state cookies first-party on the frontend domain.
  */
 export const authClient = createAuthClient({
-  baseURL: BACKEND_URL,
+  baseURL: typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
 });
 
 export const {

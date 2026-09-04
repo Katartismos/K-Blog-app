@@ -36,7 +36,8 @@ export const metadata: Metadata = {
   title: "K-Blog — The Modern Editor's Choice",
   description: "A modern blog platform",
   icons: {
-    icon: '/articles2.png',
+    icon: '/k-blog-icon.png',
+    apple: '/k-blog-icon.png',
   },
 };
 

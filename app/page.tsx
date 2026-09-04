@@ -5,12 +5,26 @@
  * featured articles, latest articles, and category topics.
  */
 
+import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
+import { auth } from '@/auth';
 import HomeClient from '@/components/HomeClient';
 import { BACKEND_URL, CATEGORIES_LIST, CATEGORY_COLORS, type Article } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
+  /**
+   * Unauthenticated Entry Guard:
+   * If user is neither authenticated nor in guest mode, redirect to /welcome
+   */
+  const cookieStore = await cookies();
+  const isGuest = cookieStore.get('guest_mode')?.value === 'true';
+  const session = await auth();
+
+  if (!session?.user && !isGuest) {
+    redirect('/welcome');
+  }
   /**
    * Fetch posts from backend
    */

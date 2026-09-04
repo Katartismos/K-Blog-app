@@ -145,10 +145,13 @@ const Header = () => {
   const handleSignOut = async () => {
     try {
       setIsUserMenuOpen(false);
+      // Clear guest mode cookie so user lands cleanly on onboarding
+      document.cookie =
+        "guest_mode=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
       await signOut({
         fetchOptions: {
           onSuccess: () => {
-            window.location.reload();
+            window.location.href = "/welcome";
           },
         },
       });
@@ -288,6 +291,13 @@ const Header = () => {
                       <div className="px-4 py-2 text-sm text-gray-700 dark:text-gray-200 border-b border-gray-100 dark:border-slate-700">
                         <p className="font-semibold">Guest</p>
                       </div>
+                      <Link
+                        href="/welcome"
+                        onClick={() => setIsUserMenuOpen(false)}
+                        className="block w-full text-left px-4 py-2 text-sm text-amber-700 dark:text-amber-500 hover:bg-gray-100 dark:hover:bg-slate-750 transition cursor-pointer font-medium"
+                      >
+                        Sign In / Register
+                      </Link>
                       <button
                         onClick={handleSignIn}
                         className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-750 transition cursor-pointer"

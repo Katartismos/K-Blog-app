@@ -178,10 +178,10 @@ const Header = () => {
             <Image
               src="/k-blog-icon.png"
               alt="K-Blog Logo"
-              width={40}
-              height={40}
+              width={30}
+              height={30}
               priority
-              className="w-12 h-12 object-contain shrink-0"
+              className="w-10 h-10 object-contain shrink-0"
             />
             <span className="text-2xl font-bold text-gray-800 dark:text-gray-100">
               K-BLOG

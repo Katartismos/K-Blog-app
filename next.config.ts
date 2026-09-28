@@ -36,7 +36,7 @@ const nextConfig: NextConfig = {
       process.env.NEXT_PUBLIC_BACKEND_URL ||
       process.env.BACKEND_URL ||
       (process.env.NODE_ENV === "production"
-        ? "https://k-blog-backend.onrender.com"
+        ? "https://k-blog-backend.vercel.app"
         : "http://localhost:5000");
 
     return [

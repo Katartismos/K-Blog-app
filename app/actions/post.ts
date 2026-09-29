@@ -1,42 +1,55 @@
 /**
  * Post Server Actions
- * 
+ *
  * Contains functions that run on the server to handle blog post operations
  * via the NestJS PostgreSQL + Better Auth backend.
  */
 
-'use server'
+"use server";
 
-import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers';
-import sanitizeHtml from 'sanitize-html';
-import { BACKEND_URL } from '@/lib/constants';
+import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import sanitizeHtml from "sanitize-html";
+import { BACKEND_URL } from "@/lib/constants";
 
 /**
  * HTML Sanitization Options
- * 
+ *
  * Defines which tags and attributes are allowed in the blog post content.
  * Prevents XSS attacks by stripping malicious scripts and styles.
  */
 const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedTags: [
-    'p', 'br', 'strong', 'em', 'u', 's',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'ul', 'ol', 'li',
-    'blockquote', 'hr',
-    'a',
+    "p",
+    "br",
+    "strong",
+    "em",
+    "u",
+    "s",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ul",
+    "ol",
+    "li",
+    "blockquote",
+    "hr",
+    "a",
   ],
   allowedAttributes: {
-    'a': ['href', 'target', 'rel'],
+    a: ["href", "target", "rel"],
   },
-  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemes: ["http", "https", "mailto"],
 };
 
 /**
  * createPost
- * 
+ *
  * Server Action to create a new blog post via the backend API.
- * 
+ *
  * @param {FormData} formData - Form data containing title, content, excerpt, category, image
  * @returns {Promise<{error?: string, success?: boolean, post?: any}>} Result of the operation.
  */
@@ -46,59 +59,125 @@ export async function createPost(formData: FormData) {
   const cookieHeader = cookieStore.toString();
 
   // 2. Validate basic fields
-  const title = formData.get('title') as string;
-  const rawContent = formData.get('content') as string;
-  const excerpt = formData.get('excerpt') as string;
-  const imageFile = formData.get('image') as File | null;
+  const title = formData.get("title") as string;
+  const rawContent = formData.get("content") as string;
+  const excerpt = formData.get("excerpt") as string;
+  const imageFile = formData.get("image") as File | null;
 
   if (!title || !rawContent) {
-    return { error: 'Title and content are required fields.' };
+    return { error: "Title and content are required fields." };
   }
 
   // 3. Sanitize HTML content
   const content = sanitizeHtml(rawContent, sanitizeOptions);
-  const plainText = content.replace(/<[^>]+>/g, '').trim();
+  const plainText = content.replace(/<[^>]+>/g, "").trim();
   if (plainText.length < 30) {
-    return { error: 'Content must be at least 30 characters long.' };
+    return { error: "Content must be at least 30 characters long." };
   }
 
   if (!excerpt) {
-    return { error: 'Excerpt is a required field.' };
+    return { error: "Excerpt is a required field." };
   }
 
   if (!imageFile || imageFile.size === 0) {
-    return { error: 'An image is required.' };
+    return { error: "An image is required." };
+  }
+
+  // Vercel Serverless Function body limit is 4.5MB
+  if (imageFile.size > 4 * 1024 * 1024) {
+    return {
+      error:
+        "Image file size exceeds the 4.5MB serverless limit. Please choose a smaller or compressed image.",
+    };
   }
 
   // Update content in formData with sanitized version
-  formData.set('content', content);
+  formData.set("content", content);
 
   // 4. Send request to backend
   try {
     const res = await fetch(`${BACKEND_URL}/posts`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       },
       body: formData,
-      cache: 'no-store',
+      cache: "no-store",
     });
 
     if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      const message = errorData.message || (res.status === 401 ? 'You must be logged in to create a post.' : 'Failed to create post on server.');
-      return { error: Array.isArray(message) ? message.join(', ') : message };
+      const errorText = await res.text().catch(() => "");
+      let message = "";
+
+      // Try to parse JSON error returned by NestJS / Better Auth
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (Array.isArray(errorJson.message)) {
+          message = errorJson.message.join(", ");
+        } else if (errorJson.message) {
+          message = errorJson.message;
+        } else if (typeof errorJson.error === "string") {
+          message = errorJson.error;
+        }
+      } catch {
+        // Non-JSON response (e.g. Vercel edge/gateway error, HTML page, or plain text)
+      }
+
+      // If no JSON message was extracted, map by HTTP status code or gateway response
+      if (!message) {
+        if (
+          res.status === 413 ||
+          errorText.includes("FUNCTION_PAYLOAD_TOO_LARGE")
+        ) {
+          message =
+            "The uploaded image is too large (max ~4MB). Please use a smaller or compressed image.";
+        } else if (
+          res.status === 504 ||
+          errorText.includes("FUNCTION_INVOCATION_TIMEOUT") ||
+          errorText.includes("Gateway Timeout")
+        ) {
+          message =
+            "The server timed out while processing your request (likely due to a cold start or image upload). Please try again.";
+        } else if (res.status === 401) {
+          message = "You must be logged in to create a post.";
+        } else if (res.status === 403) {
+          message = "Access forbidden. Please ensure your session is active.";
+        } else if (res.status === 500) {
+          message =
+            "The backend server encountered an internal error. Please check server logs and try again.";
+        } else if (
+          errorText &&
+          errorText.length < 200 &&
+          !errorText.includes("<html")
+        ) {
+          message = errorText.trim();
+        } else {
+          message = `Failed to create post on server (HTTP ${res.status}: ${res.statusText || "Error"}).`;
+        }
+      }
+
+      console.error(
+        `Post creation failed [HTTP ${res.status}]:`,
+        message,
+        errorText,
+      );
+      return { error: message };
     }
 
     const post = await res.json();
 
     // 5. Revalidate cache
-    revalidatePath('/');
-    revalidatePath('/others');
+    revalidatePath("/");
+    revalidatePath("/others");
 
     return { success: true, post };
   } catch (error) {
-    console.error('Error creating post via backend:', error);
-    return { error: error instanceof Error ? error.message : 'Unable to connect to the backend server.' };
+    console.error("Error creating post via backend:", error);
+    return {
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to connect to the backend server.",
+    };
   }
 }

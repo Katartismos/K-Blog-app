@@ -10,7 +10,11 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
-import { createPost } from "@/app/actions/post";
+import {
+  createPost,
+  getCloudinaryUploadSignature,
+} from "@/app/actions/post";
+import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import TiptapEditor from "@/components/TiptapEditor";
@@ -21,6 +25,7 @@ export default function NewPostPage() {
 
   // Local state for UI feedback and form data
   const [loading, setLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState("");
   const [contentHtml, setContentHtml] = useState(""); // Stores HTML from Tiptap editor
 
@@ -53,6 +58,7 @@ export default function NewPostPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
+    setLoadingStage("");
     setError("");
 
     // Strip HTML tags to get plain text for length validation
@@ -75,11 +81,44 @@ export default function NewPostPage() {
       return;
     }
 
+    const imageFile = formData.get("image") as File | null;
+    if (!imageFile || imageFile.size === 0) {
+      setError("Please select an image for your post.");
+      setLoading(false);
+      return;
+    }
+
     // Inject the Tiptap HTML output as the 'content' field in FormData
     formData.set("content", contentHtml);
 
     try {
-      // Execute server action to save the post to the backend
+      // 1. Request authenticated Cloudinary upload signature from backend
+      setLoadingStage("Authorizing upload...");
+      const sigResponse = await getCloudinaryUploadSignature();
+      if (sigResponse.error || !sigResponse.data) {
+        throw new Error(
+          sigResponse.error || "Failed to authorize image upload with server.",
+        );
+      }
+
+      // 2. Upload image directly from browser to Cloudinary CDN
+      setLoadingStage("Uploading image...");
+      const secureUrl = await uploadImageToCloudinary(
+        imageFile,
+        sigResponse.data,
+        {
+          onProgress: (percent) => {
+            setLoadingStage(`Uploading image (${percent}%)...`);
+          },
+        },
+      );
+
+      // 3. Remove heavy binary file from server action payload and attach the Cloudinary URL
+      formData.delete("image");
+      formData.set("imageUrl", secureUrl);
+
+      // 4. Save the post to database via lightweight server action
+      setLoadingStage("Publishing post...");
       const response = await createPost(formData);
 
       if (response?.error) {
@@ -240,7 +279,7 @@ export default function NewPostPage() {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                       ></path>
                     </svg>
-                    Publishing...
+                    {loadingStage || "Publishing..."}
                   </>
                 ) : (
                   "Publish Post"

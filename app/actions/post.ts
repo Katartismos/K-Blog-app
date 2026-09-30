@@ -46,11 +46,48 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
 };
 
 /**
+ * Server Action to obtain an authenticated Cloudinary upload signature
+ * from the NestJS backend for direct client-side upload.
+ */
+export async function getCloudinaryUploadSignature() {
+  const cookieStore = await cookies();
+  const cookieHeader = cookieStore.toString();
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/posts/cloudinary-signature`, {
+      method: "GET",
+      headers: {
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "");
+      return {
+        error: `Failed to authenticate upload signature (${res.status}): ${errorText || res.statusText}`,
+      };
+    }
+
+    const data = await res.json();
+    return { data };
+  } catch (err: unknown) {
+    console.error("Signature fetch error:", err);
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : "An unexpected error occurred while requesting upload signature.",
+    };
+  }
+}
+
+/**
  * createPost
  *
  * Server Action to create a new blog post via the backend API.
  *
- * @param {FormData} formData - Form data containing title, content, excerpt, category, image
+ * @param {FormData} formData - Form data containing title, content, excerpt, category, image or imageUrl
  * @returns {Promise<{error?: string, success?: boolean, post?: any}>} Result of the operation.
  */
 export async function createPost(formData: FormData) {
@@ -62,6 +99,7 @@ export async function createPost(formData: FormData) {
   const title = formData.get("title") as string;
   const rawContent = formData.get("content") as string;
   const excerpt = formData.get("excerpt") as string;
+  const imageUrl = formData.get("imageUrl") as string | null;
   const imageFile = formData.get("image") as File | null;
 
   if (!title || !rawContent) {
@@ -79,12 +117,13 @@ export async function createPost(formData: FormData) {
     return { error: "Excerpt is a required field." };
   }
 
-  if (!imageFile || imageFile.size === 0) {
+  // Validate presence of an image source (either direct Cloudinary URL or uploaded file buffer)
+  if (!imageUrl && (!imageFile || imageFile.size === 0)) {
     return { error: "An image is required." };
   }
 
-  // Vercel Serverless Function body limit is 4.5MB
-  if (imageFile.size > 4 * 1024 * 1024) {
+  // If a raw binary file is passed without a direct URL, enforce the 4.5MB serverless limit
+  if (!imageUrl && imageFile && imageFile.size > 4 * 1024 * 1024) {
     return {
       error:
         "Image file size exceeds the 4.5MB serverless limit. Please choose a smaller or compressed image.",

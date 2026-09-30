@@ -173,7 +173,7 @@ export default function NewPostPage() {
                   name="image"
                   accept="image/png, image/jpeg, image/jpg, image/svg+xml"
                   required
-                  className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-700 focus:border-amber-700 transition duration-150 text-black dark:text-white file:cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-amber-50 dark:file:bg-slate-800 file:text-amber-700 dark:file:text-amber-500 hover:file:bg-amber-100 dark:hover:file:bg-slate-705"
+                  className="w-full px-4 py-3 rounded-lg border border-gray-300 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-amber-700 focus:border-amber-700 transition duration-150 text-black dark:text-white file:cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-amber-50 dark:file:bg-slate-800 file:text-amber-700 dark:file:text-amber-500 hover:file:bg-amber-600/50 dark:hover:file:bg-slate-705"
                 />
               </div>
             </div>

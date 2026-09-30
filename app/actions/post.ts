@@ -117,17 +117,9 @@ export async function createPost(formData: FormData) {
     return { error: "Excerpt is a required field." };
   }
 
-  // Validate presence of an image source (either direct Cloudinary URL or uploaded file buffer)
+  // Validate presence of an image source (direct Cloudinary URL or uploaded file buffer)
   if (!imageUrl && (!imageFile || imageFile.size === 0)) {
     return { error: "An image is required." };
-  }
-
-  // If a raw binary file is passed without a direct URL, enforce the 4.5MB serverless limit
-  if (!imageUrl && imageFile && imageFile.size > 4 * 1024 * 1024) {
-    return {
-      error:
-        "Image file size exceeds the 4.5MB serverless limit. Please choose a smaller or compressed image.",
-    };
   }
 
   // Update content in formData with sanitized version
@@ -165,18 +157,12 @@ export async function createPost(formData: FormData) {
       // If no JSON message was extracted, map by HTTP status code or gateway response
       if (!message) {
         if (
-          res.status === 413 ||
-          errorText.includes("FUNCTION_PAYLOAD_TOO_LARGE")
-        ) {
-          message =
-            "The uploaded image is too large (max ~4MB). Please use a smaller or compressed image.";
-        } else if (
           res.status === 504 ||
           errorText.includes("FUNCTION_INVOCATION_TIMEOUT") ||
           errorText.includes("Gateway Timeout")
         ) {
           message =
-            "The server timed out while processing your request (likely due to a cold start or image upload). Please try again.";
+            "The server timed out while processing your request (likely due to a cold start). Please try again.";
         } else if (res.status === 401) {
           message = "You must be logged in to create a post.";
         } else if (res.status === 403) {

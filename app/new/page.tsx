@@ -10,10 +10,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
-import {
-  createPost,
-  getCloudinaryUploadSignature,
-} from "@/app/actions/post";
+import { createPost, getCloudinaryUploadSignature } from "@/app/actions/post";
 import { uploadImageToCloudinary } from "@/lib/cloudinary";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
@@ -204,7 +201,10 @@ export default function NewPostPage() {
                   htmlFor="image"
                   className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1"
                 >
-                  Upload Image <span className="text-red-600">*</span>
+                  Upload Image <span className="text-red-600">*</span>{" "}
+                  <span className="text-gray-500 dark:text-gray-400">
+                    (Max 10MB)
+                  </span>
                 </label>
                 <input
                   type="file"

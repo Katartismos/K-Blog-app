@@ -1,67 +1,24 @@
 /**
  * Others Page (Server Component)
  * 
- * Displays older blog posts fetched from the NestJS PostgreSQL backend.
+ * Displays older blog posts fetched directly from the PostgreSQL Data Access Layer (DAL).
  */
 
-import OthersClient from '@/components/OthersClient';
-import { BACKEND_URL, CATEGORIES_LIST, CATEGORY_COLORS, type Article } from '@/lib/constants';
+import OthersClient from "@/components/OthersClient";
+import { getPosts, getCategoryCounts, serializePost } from "@/lib/dal/posts";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function OthersPage() {
-  /**
-   * Fetch posts from backend
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let posts: any[] = [];
-  try {
-    const res = await fetch(`${BACKEND_URL}/posts`, {
-      cache: 'no-store',
-      headers: {
-        'Accept': 'application/json',
-      },
-    });
-    if (res.ok) {
-      posts = await res.json();
-    } else {
-      console.error(`Failed to fetch posts from backend: ${res.status} ${res.statusText}`);
-    }
-  } catch (error) {
-    console.error('Error fetching posts from backend:', error);
-  }
+  const [rawPosts, topicsInfo] = await Promise.all([
+    getPosts(),
+    getCategoryCounts(),
+  ]);
 
-  /**
-   * Data Serialization
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const serializedPosts: Article[] = posts.map((post: any) => ({
-    _id: post.id ? String(post.id) : String(post._id || ''),
-    id: post.id ? String(post.id) : '',
-    slug: post.slug || '',
-    title: post.title || 'Untitled',
-    imageUrl: post.imageUrl || 'https://placehold.co/800x600/374151/ffffff?text=No+Image',
-    category: post.category || 'TECHNOLOGY',
-    categoryColor: post.categoryColor || CATEGORY_COLORS[post.category] || 'bg-indigo-600',
-    date: post.date || (post.createdAt ? new Date(post.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown Date'),
-    readTime: post.readTime || '5-min read',
-    excerpt: post.excerpt || 'No excerpt available.',
-    author: post.author?.name || post.author || 'Admin User',
-    authorImage: post.author?.image || null,
-  }));
+  const serializedPosts = rawPosts.map(serializePost);
 
   // Older posts are those after the first 9 featured/latest posts
   const olderPosts = serializedPosts.slice(9);
 
-  // Category counts
-  const topicsInfo = CATEGORIES_LIST.map(cat => {
-    const count = serializedPosts.filter(p => (p.category || '').toUpperCase() === cat).length;
-    return {
-      name: cat.charAt(0) + cat.slice(1).toLowerCase(),
-      count,
-    };
-  });
-
-  // Render the Client Component for the others page
   return <OthersClient olderPosts={olderPosts} topics={topicsInfo} />;
 }

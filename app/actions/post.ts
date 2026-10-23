@@ -1,22 +1,18 @@
-/**
- * Post Server Actions
- *
- * Contains functions that run on the server to handle blog post operations
- * via the NestJS PostgreSQL + Better Auth backend.
- */
-
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { cookies } from "next/headers";
 import sanitizeHtml from "sanitize-html";
-import { BACKEND_URL } from "@/lib/constants";
+import { z } from "zod";
+import { eq, and, ne } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { posts } from "@/lib/db/schema/posts";
+import { CATEGORY_COLORS } from "@/lib/constants";
+import { generateUploadSignature } from "@/lib/cloudinary-server";
+import { createSafeAction } from "@/lib/actions/action-wrapper";
 
 /**
  * HTML Sanitization Options
- *
- * Defines which tags and attributes are allowed in the blog post content.
- * Prevents XSS attacks by stripping malicious scripts and styles.
+ * Prevents XSS attacks by stripping disallowed tags and attributes.
  */
 const sanitizeOptions: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -46,163 +42,377 @@ const sanitizeOptions: sanitizeHtml.IOptions = {
 };
 
 /**
- * Server Action to obtain an authenticated Cloudinary upload signature
- * from the NestJS backend for direct client-side upload.
+ * Generates an SEO-safe unique slug for posts.
  */
-export async function getCloudinaryUploadSignature() {
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
+async function generateUniqueSlug(
+  title: string,
+  customSlug?: string,
+  excludePostId?: string,
+): Promise<string> {
+  const base = (customSlug || title)
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/[\s_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
-  try {
-    const res = await fetch(`${BACKEND_URL}/posts/cloudinary-signature`, {
-      method: "GET",
-      headers: {
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      },
-      cache: "no-store",
-    });
+  const baseSlug = base || "post";
 
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => "");
-      return {
-        error: `Failed to authenticate upload signature (${res.status}): ${errorText || res.statusText}`,
-      };
-    }
-
-    const data = await res.json();
-    return { data };
-  } catch (err: unknown) {
-    console.error("Signature fetch error:", err);
-    return {
-      error:
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred while requesting upload signature.",
-    };
+  const conditions = [eq(posts.slug, baseSlug)];
+  if (excludePostId) {
+    conditions.push(ne(posts.id, excludePostId));
   }
+
+  const [existing] = await db
+    .select({ id: posts.id })
+    .from(posts)
+    .where(and(...conditions))
+    .limit(1);
+
+  if (!existing) {
+    return baseSlug;
+  }
+
+  const uniqueSuffix = Math.random().toString(36).substring(2, 7);
+  return `${baseSlug}-${uniqueSuffix}`;
+}
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns a Drizzle SQL filter for post lookup by UUID or slug,
+ * avoiding invalid UUID type cast errors in PostgreSQL.
+ */
+function getPostIdentifierFilter(idOrSlug: string) {
+  return UUID_REGEX.test(idOrSlug)
+    ? eq(posts.id, idOrSlug)
+    : eq(posts.slug, idOrSlug);
 }
 
 /**
- * createPost
- *
- * Server Action to create a new blog post via the backend API.
- *
- * @param {FormData} formData - Form data containing title, content, excerpt, category, image or imageUrl
- * @returns {Promise<{error?: string, success?: boolean, post?: any}>} Result of the operation.
+ * 1. Cloudinary Upload Signature Action
+ * Protected by Better Auth session and Arcjet defense.
  */
-export async function createPost(formData: FormData) {
-  // 1. Get cookies to pass authentication to backend
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore.toString();
+const getSignatureSchema = z
+  .preprocess((val) => val ?? {}, z.object({
+    folder: z.string().optional(),
+  }))
+  .optional()
+  .default({});
 
-  // 2. Validate basic fields
-  const title = formData.get("title") as string;
-  const rawContent = formData.get("content") as string;
-  const excerpt = formData.get("excerpt") as string;
-  const imageUrl = formData.get("imageUrl") as string | null;
-  const imageFile = formData.get("image") as File | null;
+export const getCloudinaryUploadSignature = createSafeAction(
+  getSignatureSchema,
+  async (input) => {
+    const folder = input?.folder || "blog-posts";
+    return generateUploadSignature(folder);
+  },
+  { requireAuth: true },
+);
 
-  if (!title || !rawContent) {
-    return { error: "Title and content are required fields." };
-  }
-
-  // 3. Sanitize HTML content
-  const content = sanitizeHtml(rawContent, sanitizeOptions);
-  const plainText = content.replace(/<[^>]+>/g, "").trim();
-  if (plainText.length < 30) {
-    return { error: "Content must be at least 30 characters long." };
-  }
-
-  if (!excerpt) {
-    return { error: "Excerpt is a required field." };
-  }
-
-  // Validate presence of an image source (direct Cloudinary URL or uploaded file buffer)
-  if (!imageUrl && (!imageFile || imageFile.size === 0)) {
-    return { error: "An image is required." };
-  }
-
-  // Update content in formData with sanitized version
-  formData.set("content", content);
-
-  // 4. Send request to backend
-  try {
-    const res = await fetch(`${BACKEND_URL}/posts`, {
-      method: "POST",
-      headers: {
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      },
-      body: formData,
-      cache: "no-store",
-    });
-
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => "");
-      let message = "";
-
-      // Try to parse JSON error returned by NestJS / Better Auth
+/**
+ * Shared validator for Cloudinary image URLs.
+ * Accepts only valid HTTPS URLs hosted on res.cloudinary.com.
+ */
+const cloudinaryImageUrlSchema = z
+  .string()
+  .min(1, "An image is required.")
+  .url("Invalid image URL format.")
+  .refine(
+    (url) => {
       try {
-        const errorJson = JSON.parse(errorText);
-        if (Array.isArray(errorJson.message)) {
-          message = errorJson.message.join(", ");
-        } else if (errorJson.message) {
-          message = errorJson.message;
-        } else if (typeof errorJson.error === "string") {
-          message = errorJson.error;
-        }
+        const parsed = new URL(url);
+        return (
+          parsed.protocol === "https:" &&
+          parsed.hostname === "res.cloudinary.com"
+        );
       } catch {
-        // Non-JSON response (e.g. Vercel edge/gateway error, HTML page, or plain text)
+        return false;
       }
+    },
+    {
+      message: "Image must be a valid HTTPS URL hosted on res.cloudinary.com.",
+    },
+  );
 
-      // If no JSON message was extracted, map by HTTP status code or gateway response
-      if (!message) {
-        if (
-          res.status === 504 ||
-          errorText.includes("FUNCTION_INVOCATION_TIMEOUT") ||
-          errorText.includes("Gateway Timeout")
-        ) {
-          message =
-            "The server timed out while processing your request (likely due to a cold start). Please try again.";
-        } else if (res.status === 401) {
-          message = "You must be logged in to create a post.";
-        } else if (res.status === 403) {
-          message = "Access forbidden. Please ensure your session is active.";
-        } else if (res.status === 500) {
-          message =
-            "The backend server encountered an internal error. Please check server logs and try again.";
-        } else if (
-          errorText &&
-          errorText.length < 200 &&
-          !errorText.includes("<html")
-        ) {
-          message = errorText.trim();
-        } else {
-          message = `Failed to create post on server (HTTP ${res.status}: ${res.statusText || "Error"}).`;
+/**
+ * 2. Create Post Action
+ * Supports both FormData and plain object payloads.
+ */
+const createPostSchema = z.preprocess(
+  (val) => {
+    if (val instanceof FormData) {
+      const getVal = (key: string) => {
+        const v = val.get(key);
+        if (typeof v === "string") {
+          const trimmed = v.trim();
+          return trimmed.length > 0 ? trimmed : undefined;
         }
-      }
+        return undefined;
+      };
 
-      console.error(
-        `Post creation failed [HTTP ${res.status}]:`,
-        message,
-        errorText,
-      );
-      return { error: message };
+      return {
+        title: getVal("title"),
+        content: val.get("content") ?? "",
+        excerpt: getVal("excerpt"),
+        category: getVal("category"),
+        imageUrl: getVal("imageUrl"),
+        slug: getVal("slug"),
+      };
+    }
+    return val;
+  },
+  z.object({
+    title: z.string().min(1, "Title is a required field."),
+    content: z.string().min(1, "Content is a required field."),
+    excerpt: z.string().nullable().optional(),
+    category: z.string().min(1, "Category is a required field."),
+    imageUrl: cloudinaryImageUrlSchema,
+    slug: z.string().nullable().optional(),
+  }),
+);
+
+export const createPost = createSafeAction(
+  createPostSchema,
+  async (input, { user }) => {
+    // Sanitize HTML content
+    const sanitizedContent = sanitizeHtml(input.content, sanitizeOptions);
+    const plainText = sanitizedContent.replace(/<[^>]+>/g, " ").trim();
+
+    if (plainText.length < 30) {
+      throw new Error("Content must be at least 30 characters long.");
     }
 
-    const post = await res.json();
+    // Derive excerpt
+    const excerpt =
+      input.excerpt && input.excerpt.trim()
+        ? input.excerpt.trim()
+        : plainText.length > 160
+          ? `${plainText.substring(0, 157)}...`
+          : plainText || input.title;
 
-    // 5. Revalidate cache
+    // Derive category color
+    const categoryUpper = input.category.toUpperCase();
+    const categoryColor =
+      CATEGORY_COLORS[categoryUpper] ||
+      CATEGORY_COLORS[input.category] ||
+      "bg-gray-600";
+
+    // Derive read time
+    const words = plainText.split(/\s+/).filter(Boolean).length;
+    const readTime = `${Math.max(1, Math.ceil(words / 200))}-min read`;
+
+    // Generate unique slug
+    const slug = await generateUniqueSlug(input.title, input.slug || undefined);
+
+    // Insert post into database
+    const [newPost] = await db
+      .insert(posts)
+      .values({
+        title: input.title,
+        slug,
+        content: sanitizedContent,
+        excerpt,
+        category: categoryUpper,
+        categoryColor,
+        imageUrl: input.imageUrl,
+        readTime,
+        userId: user.id,
+      })
+      .returning();
+
+    // Revalidate paths for instant UI updates
     revalidatePath("/");
     revalidatePath("/others");
 
-    return { success: true, post };
-  } catch (error) {
-    console.error("Error creating post via backend:", error);
+    return newPost;
+  },
+  { requireAuth: true },
+);
+
+/**
+ * 3. Update Post Action
+ * Requires author ownership or admin role.
+ */
+const updatePostSchema = z.preprocess(
+  (val) => {
+    if (val instanceof FormData) {
+      const getVal = (key: string) => {
+        const v = val.get(key);
+        if (typeof v === "string") {
+          const trimmed = v.trim();
+          return trimmed.length > 0 ? trimmed : undefined;
+        }
+        return undefined;
+      };
+
+      return {
+        idOrSlug: getVal("idOrSlug"),
+        title: getVal("title"),
+        content: val.get("content") ? String(val.get("content")) : undefined,
+        excerpt: getVal("excerpt"),
+        category: getVal("category"),
+        imageUrl: getVal("imageUrl"),
+        slug: getVal("slug"),
+      };
+    }
+    return val;
+  },
+  z.object({
+    idOrSlug: z.string().min(1, "Post ID or slug is required."),
+    title: z.string().min(1).nullable().optional(),
+    content: z.string().nullable().optional(),
+    excerpt: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    imageUrl: cloudinaryImageUrlSchema.nullable().optional(),
+    slug: z.string().nullable().optional(),
+  }),
+);
+
+export const updatePost = createSafeAction(
+  updatePostSchema,
+  async (input, { user }) => {
+    // 1. Find existing post
+    const [existingPost] = await db
+      .select()
+      .from(posts)
+      .where(getPostIdentifierFilter(input.idOrSlug))
+      .limit(1);
+
+    if (!existingPost) {
+      throw new Error(`Post not found with identifier "${input.idOrSlug}"`);
+    }
+
+    // 2. Ownership verification
+    const isAuthor = existingPost.userId === user.id;
+    const isAdmin = (user as any).role === "admin";
+
+    if (!isAuthor && !isAdmin) {
+      throw new Error("You are not authorized to update this post.");
+    }
+
+    // 3. Handle slug update
+    let slug = existingPost.slug;
+    if (
+      (input.title && input.title !== existingPost.title) ||
+      (input.slug && input.slug !== existingPost.slug)
+    ) {
+      slug = await generateUniqueSlug(
+        input.title || existingPost.title,
+        input.slug || undefined,
+        existingPost.id,
+      );
+    }
+
+    // 4. Handle category & categoryColor
+    const category = input.category
+      ? input.category.toUpperCase()
+      : existingPost.category;
+    const categoryColor = input.category
+      ? CATEGORY_COLORS[category] || "bg-gray-600"
+      : existingPost.categoryColor;
+
+    // 5. Handle content, excerpt, and readTime
+    let content = existingPost.content;
+    let excerpt = existingPost.excerpt;
+    let readTime = existingPost.readTime;
+
+    if (input.content) {
+      content = sanitizeHtml(input.content, sanitizeOptions);
+      const plainText = content.replace(/<[^>]+>/g, " ").trim();
+
+      if (plainText.length < 30) {
+        throw new Error("Content must be at least 30 characters long.");
+      }
+
+      const words = plainText.split(/\s+/).filter(Boolean).length;
+      readTime = `${Math.max(1, Math.ceil(words / 200))}-min read`;
+
+      if (!input.excerpt) {
+        excerpt =
+          plainText.length > 160
+            ? `${plainText.substring(0, 157)}...`
+            : plainText || input.title || existingPost.title;
+      }
+    }
+
+    if (input.excerpt) {
+      excerpt = input.excerpt.trim();
+    }
+
+    // 6. Update database record
+    const [updatedPost] = await db
+      .update(posts)
+      .set({
+        title: input.title ?? existingPost.title,
+        slug,
+        content,
+        excerpt,
+        category,
+        categoryColor,
+        imageUrl: input.imageUrl ?? existingPost.imageUrl,
+        readTime,
+        updatedAt: new Date(),
+      })
+      .where(eq(posts.id, existingPost.id))
+      .returning();
+
+    // 7. Revalidate caches
+    revalidatePath("/");
+    revalidatePath("/others");
+    revalidatePath(`/blog/${existingPost.slug}`);
+    if (slug !== existingPost.slug) {
+      revalidatePath(`/blog/${slug}`);
+    }
+
+    return updatedPost;
+  },
+  { requireAuth: true },
+);
+
+/**
+ * 4. Delete Post Action
+ * Requires author ownership or admin role.
+ */
+const deletePostSchema = z.object({
+  idOrSlug: z.string().min(1, "Post ID or slug is required."),
+});
+
+export const deletePost = createSafeAction(
+  deletePostSchema,
+  async (input, { user }) => {
+    // 1. Find existing post
+    const [existingPost] = await db
+      .select()
+      .from(posts)
+      .where(getPostIdentifierFilter(input.idOrSlug))
+      .limit(1);
+
+    if (!existingPost) {
+      throw new Error(`Post not found with identifier "${input.idOrSlug}"`);
+    }
+
+    // 2. Ownership verification
+    const isAuthor = existingPost.userId === user.id;
+    const isAdmin = (user as any).role === "admin";
+
+    if (!isAuthor && !isAdmin) {
+      throw new Error("You are not authorized to delete this post.");
+    }
+
+    // 3. Delete record
+    await db.delete(posts).where(eq(posts.id, existingPost.id));
+
+    // 4. Revalidate paths
+    revalidatePath("/");
+    revalidatePath("/others");
+    revalidatePath(`/blog/${existingPost.slug}`);
+
     return {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Unable to connect to the backend server.",
+      message: "Post deleted successfully",
+      id: existingPost.id,
+      slug: existingPost.slug,
     };
-  }
-}
+  },
+  { requireAuth: true },
+);

@@ -1,16 +1,17 @@
-'use client';
+"use client";
 
-import { createAuthClient } from 'better-auth/react';
-import { BACKEND_URL } from './constants';
+import { createAuthClient } from "better-auth/react";
 
 /**
  * Better Auth Client
- * 
- * Proxies auth requests through Next.js rewrites to the NestJS backend.
- * This keeps session and OAuth state cookies first-party on the frontend domain.
+ *
+ * Native first-party client communicating directly with the Next.js App Router `/api/auth` endpoints.
  */
 export const authClient = createAuthClient({
-  baseURL: typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
+  baseURL:
+    typeof window !== "undefined"
+      ? window.location.origin
+      : (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
 });
 
 export const {

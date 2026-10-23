@@ -1,20 +1,8 @@
 /**
  * Shared Constants and Types
  * 
- * This file contains global type definitions, constant configurations (like colors),
- * and backend endpoint configurations.
+ * This file contains global type definitions and constant configurations (like colors).
  */
-
-/**
- * Backend API URL
- * Automatically handles development vs production backend URLs.
- */
-export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  process.env.BACKEND_URL ||
-  (process.env.NODE_ENV === 'production'
-    ? 'https://k-blog-backend.vercel.app'
-    : 'http://localhost:5000');
 
 /**
  * Author Object Interface

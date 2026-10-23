@@ -28,20 +28,20 @@ export function createSafeAction<TInput, TOutput>(
   schema: z.ZodType<TInput>,
   handler: (data: TInput, context: { user: User; session: Session }) => Promise<TOutput>,
   options: { requireAuth: true },
-): (input: unknown) => Promise<ActionResponse<TOutput>>;
+): (input?: unknown) => Promise<ActionResponse<TOutput>>;
 
 export function createSafeAction<TInput, TOutput>(
   schema: z.ZodType<TInput>,
   handler: (data: TInput, context: { user: User | null; session: Session | null }) => Promise<TOutput>,
   options?: { requireAuth?: false },
-): (input: unknown) => Promise<ActionResponse<TOutput>>;
+): (input?: unknown) => Promise<ActionResponse<TOutput>>;
 
 export function createSafeAction<TInput, TOutput>(
   schema: z.ZodType<TInput>,
   handler: (data: TInput, context: { user: any; session: any }) => Promise<TOutput>,
   options: SafeActionOptions = {},
 ) {
-  return async (input: unknown): Promise<ActionResponse<TOutput>> => {
+  return async (input?: unknown): Promise<ActionResponse<TOutput>> => {
     try {
       // 1. Session & Authentication Check
       const sessionResult = await auth();

@@ -111,6 +111,31 @@ export const getCloudinaryUploadSignature = createSafeAction(
 );
 
 /**
+ * Shared validator for Cloudinary image URLs.
+ * Accepts only valid HTTPS URLs hosted on res.cloudinary.com.
+ */
+const cloudinaryImageUrlSchema = z
+  .string()
+  .min(1, "An image is required.")
+  .url("Invalid image URL format.")
+  .refine(
+    (url) => {
+      try {
+        const parsed = new URL(url);
+        return (
+          parsed.protocol === "https:" &&
+          parsed.hostname === "res.cloudinary.com"
+        );
+      } catch {
+        return false;
+      }
+    },
+    {
+      message: "Image must be a valid HTTPS URL hosted on res.cloudinary.com.",
+    },
+  );
+
+/**
  * 2. Create Post Action
  * Supports both FormData and plain object payloads.
  */
@@ -142,7 +167,7 @@ const createPostSchema = z.preprocess(
     content: z.string().min(1, "Content is a required field."),
     excerpt: z.string().nullable().optional(),
     category: z.string().min(1, "Category is a required field."),
-    imageUrl: z.string().min(1, "An image is required."),
+    imageUrl: cloudinaryImageUrlSchema,
     slug: z.string().nullable().optional(),
   }),
 );
@@ -239,7 +264,7 @@ const updatePostSchema = z.preprocess(
     content: z.string().nullable().optional(),
     excerpt: z.string().nullable().optional(),
     category: z.string().nullable().optional(),
-    imageUrl: z.string().nullable().optional(),
+    imageUrl: cloudinaryImageUrlSchema.nullable().optional(),
     slug: z.string().nullable().optional(),
   }),
 );

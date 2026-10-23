@@ -1,37 +1,21 @@
 /**
  * Server Authentication Helper
  * 
- * Provides server-side session retrieval for Next.js Server Components
- * and Server Actions by communicating with the NestJS Better Auth backend.
+ * Provides native server-side session retrieval for Next.js Server Components
+ * and Server Actions directly via Better Auth in-process API.
  */
 
-import { cookies } from 'next/headers';
-import { BACKEND_URL } from '@/lib/constants';
+import { headers } from "next/headers";
+import { auth as betterAuth } from "@/lib/auth";
 
 export async function auth() {
   try {
-    const cookieStore = await cookies();
-    const cookieHeader = cookieStore.toString();
-
-    if (!cookieHeader) {
-      return null;
-    }
-
-    const res = await fetch(`${BACKEND_URL}/api/auth/get-session`, {
-      headers: {
-        Cookie: cookieHeader,
-      },
-      cache: 'no-store',
+    const session = await betterAuth.api.getSession({
+      headers: await headers(),
     });
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const session = await res.json();
     return session;
   } catch (error) {
-    console.error('Error fetching server session from backend:', error);
+    console.error("Error retrieving server session:", error);
     return null;
   }
 }

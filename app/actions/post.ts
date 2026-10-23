@@ -104,13 +104,22 @@ export const getCloudinaryUploadSignature = createSafeAction(
 const createPostSchema = z.preprocess(
   (val) => {
     if (val instanceof FormData) {
+      const getVal = (key: string) => {
+        const v = val.get(key);
+        if (typeof v === "string") {
+          const trimmed = v.trim();
+          return trimmed.length > 0 ? trimmed : undefined;
+        }
+        return undefined;
+      };
+
       return {
-        title: val.get("title"),
-        content: val.get("content"),
-        excerpt: val.get("excerpt"),
-        category: val.get("category"),
-        imageUrl: val.get("imageUrl"),
-        slug: val.get("slug"),
+        title: getVal("title"),
+        content: val.get("content") ?? "",
+        excerpt: getVal("excerpt"),
+        category: getVal("category"),
+        imageUrl: getVal("imageUrl"),
+        slug: getVal("slug"),
       };
     }
     return val;
@@ -118,10 +127,10 @@ const createPostSchema = z.preprocess(
   z.object({
     title: z.string().min(1, "Title is a required field."),
     content: z.string().min(1, "Content is a required field."),
-    excerpt: z.string().optional(),
+    excerpt: z.string().nullable().optional(),
     category: z.string().min(1, "Category is a required field."),
     imageUrl: z.string().min(1, "An image is required."),
-    slug: z.string().optional(),
+    slug: z.string().nullable().optional(),
   }),
 );
 
@@ -156,7 +165,7 @@ export const createPost = createSafeAction(
     const readTime = `${Math.max(1, Math.ceil(words / 200))}-min read`;
 
     // Generate unique slug
-    const slug = await generateUniqueSlug(input.title, input.slug);
+    const slug = await generateUniqueSlug(input.title, input.slug || undefined);
 
     // Insert post into database
     const [newPost] = await db
@@ -187,15 +196,40 @@ export const createPost = createSafeAction(
  * 3. Update Post Action
  * Requires author ownership or admin role.
  */
-const updatePostSchema = z.object({
-  idOrSlug: z.string().min(1, "Post ID or slug is required."),
-  title: z.string().min(1).optional(),
-  content: z.string().optional(),
-  excerpt: z.string().optional(),
-  category: z.string().optional(),
-  imageUrl: z.string().optional(),
-  slug: z.string().optional(),
-});
+const updatePostSchema = z.preprocess(
+  (val) => {
+    if (val instanceof FormData) {
+      const getVal = (key: string) => {
+        const v = val.get(key);
+        if (typeof v === "string") {
+          const trimmed = v.trim();
+          return trimmed.length > 0 ? trimmed : undefined;
+        }
+        return undefined;
+      };
+
+      return {
+        idOrSlug: getVal("idOrSlug"),
+        title: getVal("title"),
+        content: val.get("content") ? String(val.get("content")) : undefined,
+        excerpt: getVal("excerpt"),
+        category: getVal("category"),
+        imageUrl: getVal("imageUrl"),
+        slug: getVal("slug"),
+      };
+    }
+    return val;
+  },
+  z.object({
+    idOrSlug: z.string().min(1, "Post ID or slug is required."),
+    title: z.string().min(1).nullable().optional(),
+    content: z.string().nullable().optional(),
+    excerpt: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    imageUrl: z.string().nullable().optional(),
+    slug: z.string().nullable().optional(),
+  }),
+);
 
 export const updatePost = createSafeAction(
   updatePostSchema,
@@ -227,7 +261,7 @@ export const updatePost = createSafeAction(
     ) {
       slug = await generateUniqueSlug(
         input.title || existingPost.title,
-        input.slug,
+        input.slug || undefined,
         existingPost.id,
       );
     }

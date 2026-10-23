@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import sanitizeHtml from "sanitize-html";
 import { z } from "zod";
-import { eq, and, ne, or } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { posts } from "@/lib/db/schema/posts";
 import { CATEGORY_COLORS } from "@/lib/constants";
@@ -75,6 +75,19 @@ async function generateUniqueSlug(
 
   const uniqueSuffix = Math.random().toString(36).substring(2, 7);
   return `${baseSlug}-${uniqueSuffix}`;
+}
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns a Drizzle SQL filter for post lookup by UUID or slug,
+ * avoiding invalid UUID type cast errors in PostgreSQL.
+ */
+function getPostIdentifierFilter(idOrSlug: string) {
+  return UUID_REGEX.test(idOrSlug)
+    ? eq(posts.id, idOrSlug)
+    : eq(posts.slug, idOrSlug);
 }
 
 /**
@@ -238,7 +251,7 @@ export const updatePost = createSafeAction(
     const [existingPost] = await db
       .select()
       .from(posts)
-      .where(or(eq(posts.id, input.idOrSlug), eq(posts.slug, input.idOrSlug)))
+      .where(getPostIdentifierFilter(input.idOrSlug))
       .limit(1);
 
     if (!existingPost) {
@@ -347,7 +360,7 @@ export const deletePost = createSafeAction(
     const [existingPost] = await db
       .select()
       .from(posts)
-      .where(or(eq(posts.id, input.idOrSlug), eq(posts.slug, input.idOrSlug)))
+      .where(getPostIdentifierFilter(input.idOrSlug))
       .limit(1);
 
     if (!existingPost) {

@@ -79,12 +79,21 @@ export const getPosts = cache(async () => {
  */
 export const getPostBySlug = cache(async (slugOrId: string) => {
   try {
-    const isUuid = UUID_REGEX.test(slugOrId);
+    const cleanId = (slugOrId || "").trim();
+    let decodedSlug = cleanId;
+    try {
+      decodedSlug = decodeURIComponent(cleanId);
+    } catch {
+      // fallback to raw cleanId if decodeURIComponent fails on malformed input
+    }
+    const lowerSlug = decodedSlug.toLowerCase();
+
+    const isUuid = UUID_REGEX.test(cleanId) || UUID_REGEX.test(lowerSlug);
 
     const post = await db.query.posts.findFirst({
       where: isUuid
-        ? or(eq(posts.id, slugOrId), eq(posts.slug, slugOrId))
-        : eq(posts.slug, slugOrId),
+        ? or(eq(posts.id, cleanId), eq(posts.slug, cleanId), eq(posts.slug, lowerSlug))
+        : or(eq(posts.slug, cleanId), eq(posts.slug, lowerSlug)),
       with: {
         author: {
           columns: {
